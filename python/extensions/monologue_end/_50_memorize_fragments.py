@@ -80,8 +80,23 @@ class MemorizeMemories(Extension):
             else:
                 log_item.update(heading="Invalid memories format received.")
                 return
+        # Remove placeholder or empty memories that shouldn't be saved
+        PLACEHOLDER_TEXTS = {
+            "",
+            "none",
+            "no",
+            "n/a",
+            "no memory",
+            "no memories",
+            "no relevant information",
+            "no relevant info",
+            "no useful information",
+            "no useful info",
+            "nothing to remember",
+        }
+        memories = [m for m in memories if str(m).strip().lower() not in PLACEHOLDER_TEXTS]
 
-        if not isinstance(memories, list) or len(memories) == 0:
+        if not memories:
             log_item.update(heading="No useful information to memorize.")
             return
         else:
