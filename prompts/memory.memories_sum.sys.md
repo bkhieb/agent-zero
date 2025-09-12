@@ -10,8 +10,8 @@
 # Output example
 ~~~json
 [
-  "User's name is John Doe",
-  "User's dog's name is Max",
+  "User's name is <name>",
+  "User's dog's name is <pet_name>",
 ]
 ~~~
 
@@ -29,10 +29,10 @@
 - The goal is to keep the number of new memories low while making memories more complete and detailed
 - Do not break information related to the same subject into multiple memories, keep them as one text
 - If there are multiple facts related to the same subject, merge them into one more detailed memory instead
-- Example: Instead of three memories "User's dog is Max", "Max is 6 years old", "Max is white and brown", create one memory "User's dog is Max, 6 years old, white and brown."
+- Example: Instead of three memories "User's dog is <pet_name>", "<pet_name> is 6 years old", "<pet_name> is white and brown", create one memory "User's dog is <pet_name>, 6 years old, white and brown."
 
 # Correct examples of data worth memorizing with (explanation)
-> User's name is John Doe (name is important)
+> User's name is <name> (name is important)
 > AsyncRaceError in primary_modules.py was fixed by adding a thread lock on line 123 (important event with details for context)
 > Local SQL database was created, server is running on port 3306 (important event with details for context)
 
