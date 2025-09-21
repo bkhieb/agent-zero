@@ -97,7 +97,33 @@ class DockerPublish(Tool):
                 )
 
         registry = _clean_path_segment(self.args.get("registry", "ghcr.io"))
-        username = _clean_path_segment(self.args.get("username", "bkhieb"))
+        push_image = _to_bool(self.args.get("push", True), default=True)
+
+        warnings: list[str] = []
+
+        env_registry_user = _clean_path_segment(os.environ.get("REGISTRY_USER"))
+        missing_registry_user = not env_registry_user
+        if missing_registry_user:
+            warnings.append(
+                "Set the REGISTRY_USER environment variable (for example: `export REGISTRY_USER=bkhieb`) so docker_publish "
+                "can tag and authenticate with your registry account."
+            )
+
+        env_registry_password_raw = os.environ.get("REGISTRY_PASSWORD")
+        registry_password = (
+            env_registry_password_raw.strip() if isinstance(env_registry_password_raw, str) else ""
+        )
+        missing_registry_password = not registry_password
+        if missing_registry_password:
+            warnings.append(
+                "Set the REGISTRY_PASSWORD secret or environment variable to a GitHub personal access token with "
+                "`write:packages` scope before publishing images."
+            )
+
+        if push_image and (missing_registry_user or missing_registry_password):
+            return Response(message="\n".join(warnings), break_loop=False)
+
+        username = env_registry_user or _clean_path_segment(self.args.get("username", "bkhieb"))
         project = _clean_path_segment(self.args.get("project", "trailherotv"))
         image = _clean_path_segment(self.args.get("image"))
 
@@ -140,17 +166,10 @@ class DockerPublish(Tool):
         labels = _normalize_kv_pairs(self.args.get("labels"))
         target = self.args.get("target")
         platforms = _normalize_collection(self.args.get("platforms"))
-        push_image = _to_bool(self.args.get("push", True), default=True)
-
-        registry_password = self.args.get("registry_password")
-        registry_username = _clean_path_segment(
-            self.args.get("registry_username", username if username else None)
-        )
-
         steps_output: list[str] = []
 
-        if registry_password:
-            login_cmd = ["docker", "login", registry or "ghcr.io", "-u", registry_username or username, "--password-stdin"]
+        if push_image:
+            login_cmd = ["docker", "login", registry or "ghcr.io", "-u", username, "--password-stdin"]
             login_result = await self._run_command(login_cmd, cwd=context_path, input_text=str(registry_password))
             steps_output.append(self._format_result("docker login", login_result))
             if login_result[0] != 0:
@@ -213,10 +232,15 @@ class DockerPublish(Tool):
                         break_loop=False,
                     )
 
-        summary_lines = [
-            f"Repository: {repository}",
-            f"Primary tag: {primary_tag}",
-        ]
+        summary_lines = []
+        if warnings:
+            summary_lines.extend(f"Warning: {warning}" for warning in warnings)
+        summary_lines.extend(
+            [
+                f"Repository: {repository}",
+                f"Primary tag: {primary_tag}",
+            ]
+        )
         if normalized_additional_refs:
             summary_lines.append("Additional tags: " + ", ".join(normalized_additional_refs))
         if not push_image:
