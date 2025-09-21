@@ -62,6 +62,7 @@ class Memory:
 
     index: dict[str, "MyFaiss"] = {}
     _init_lock = asyncio.Lock()
+    _write_locks: dict[str, asyncio.Lock] = {}
 
     @staticmethod
     async def get(agent: Agent):
@@ -106,6 +107,7 @@ class Memory:
         memory_subdir = agent.config.memory_subdir or "default"
         if Memory.index.get(memory_subdir):
             del Memory.index[memory_subdir]
+            Memory._write_locks.pop(memory_subdir, None)
         return await Memory.get(agent)
 
     @staticmethod
@@ -229,7 +231,9 @@ class Memory:
         memory_subdir: str,
     ):
         # Serialize write operations so concurrent saves don't corrupt the index.
-        self._write_lock = asyncio.Lock()
+        # Locks are shared across wrappers for the same memory directory so concurrent
+        # callers that retrieve separate Memory instances still respect the guard.
+        self._write_lock = Memory._write_locks.setdefault(memory_subdir, asyncio.Lock())
         self.agent = agent
         self.db = db
         self.memory_subdir = memory_subdir
