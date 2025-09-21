@@ -228,6 +228,8 @@ class Memory:
         db: MyFaiss,
         memory_subdir: str,
     ):
+        # Serialize write operations so concurrent saves don't corrupt the index.
+        self._write_lock = asyncio.Lock()
         self.agent = agent
         self.db = db
         self.memory_subdir = memory_subdir
@@ -327,44 +329,47 @@ class Memory:
         tot = 0
         removed = []
 
-        while True:
-            # Perform similarity search with score
-            docs = await self.search_similarity_threshold(
-                query, limit=k, threshold=threshold, filter=filter
-            )
-            removed += docs
+        async with self._write_lock:
+            while True:
+                # Perform similarity search with score
+                docs = await self.search_similarity_threshold(
+                    query, limit=k, threshold=threshold, filter=filter
+                )
+                removed += docs
 
-            # Extract document IDs and filter based on score
-            # document_ids = [result[0].metadata["id"] for result in docs if result[1] < score_limit]
-            document_ids = [result.metadata["id"] for result in docs]
+                # Extract document IDs and filter based on score
+                # document_ids = [result[0].metadata["id"] for result in docs if result[1] < score_limit]
+                document_ids = [result.metadata["id"] for result in docs]
 
-            # Delete documents with IDs over the threshold score
-            if document_ids:
-                # fnd = self.db.get(where={"id": {"$in": document_ids}})
-                # if fnd["ids"]: self.db.delete(ids=fnd["ids"])
-                # tot += len(fnd["ids"])
-                await self.db.adelete(ids=document_ids)
-                tot += len(document_ids)
+                # Delete documents with IDs over the threshold score
+                if document_ids:
+                    # fnd = self.db.get(where={"id": {"$in": document_ids}})
+                    # if fnd["ids"]: self.db.delete(ids=fnd["ids"])
+                    # tot += len(fnd["ids"])
+                    await self.db.adelete(ids=document_ids)
+                    tot += len(document_ids)
 
-            # If fewer than K document IDs, break the loop
-            if len(document_ids) < k:
-                break
+                # If fewer than K document IDs, break the loop
+                if len(document_ids) < k:
+                    break
 
-        if tot:
-            self._save_db()  # persist
+            if tot:
+                self._save_db()  # persist
         return removed
 
     async def delete_documents_by_ids(self, ids: list[str]):
         # aget_by_ids is not yet implemented in faiss, need to do a workaround
-        rem_docs = await self.db.aget_by_ids(
-            ids
-        )  # existing docs to remove (prevents error)
-        if rem_docs:
-            rem_ids = [doc.metadata["id"] for doc in rem_docs]  # ids to remove
-            await self.db.adelete(ids=rem_ids)
+        rem_docs: List[Document] = []
+        async with self._write_lock:
+            rem_docs = await self.db.aget_by_ids(
+                ids
+            )  # existing docs to remove (prevents error)
+            if rem_docs:
+                rem_ids = [doc.metadata["id"] for doc in rem_docs]  # ids to remove
+                await self.db.adelete(ids=rem_ids)
 
-        if rem_docs:
-            self._save_db()  # persist
+            if rem_docs:
+                self._save_db()  # persist
         return rem_docs
 
     async def insert_text(self, text, metadata: dict = {}):
@@ -373,21 +378,24 @@ class Memory:
         return ids[0]
 
     async def insert_documents(self, docs: list[Document]):
-        ids = [self._generate_doc_id() for _ in range(len(docs))]
-        timestamp = self.get_timestamp()
+        ids: list[str] = []
+        async with self._write_lock:
+            ids = [self._generate_doc_id() for _ in range(len(docs))]
+            timestamp = self.get_timestamp()
 
-        if ids:
-            for doc, id in zip(docs, ids):
-                doc.metadata["id"] = id  # add ids to documents metadata
-                doc.metadata["timestamp"] = timestamp  # add timestamp
-                if not doc.metadata.get("area", ""):
-                    doc.metadata["area"] = Memory.Area.MAIN.value
+            if ids:
+                for doc, id in zip(docs, ids):
+                    doc.metadata["id"] = id  # add ids to documents metadata
+                    doc.metadata["timestamp"] = timestamp  # add timestamp
+                    if not doc.metadata.get("area", ""):
+                        doc.metadata["area"] = Memory.Area.MAIN.value
 
-            await self.db.aadd_documents(documents=docs, ids=ids)
-            self._save_db()  # persist
+                await self.db.aadd_documents(documents=docs, ids=ids)
+                self._save_db()  # persist
         return ids
 
     def _save_db(self):
+        """Persist the FAISS index; callers must hold `_write_lock` to avoid concurrent saves."""
         Memory._save_db_file(self.db, self.memory_subdir)
 
     def _generate_doc_id(self):
