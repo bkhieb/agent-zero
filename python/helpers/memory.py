@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any, List, Sequence
+import asyncio
 from langchain.storage import InMemoryByteStore, LocalFileStore
 from langchain.embeddings import CacheBackedEmbeddings
 from python.helpers import guids
@@ -60,11 +61,28 @@ class Memory:
         INSTRUMENTS = "instruments"
 
     index: dict[str, "MyFaiss"] = {}
+    _init_lock = asyncio.Lock()
 
     @staticmethod
     async def get(agent: Agent):
         memory_subdir = agent.config.memory_subdir or "default"
-        if Memory.index.get(memory_subdir) is None:
+        existing_db = Memory.index.get(memory_subdir)
+        if existing_db is not None:
+            return Memory(
+                agent=agent,
+                db=existing_db,
+                memory_subdir=memory_subdir,
+            )
+
+        async with Memory._init_lock:
+            existing_db = Memory.index.get(memory_subdir)
+            if existing_db is not None:
+                return Memory(
+                    agent=agent,
+                    db=existing_db,
+                    memory_subdir=memory_subdir,
+                )
+
             log_item = agent.context.log.log(
                 type="util",
                 heading=f"Initializing VectorDB in '/{memory_subdir}'",
@@ -82,12 +100,6 @@ class Memory:
                     log_item, agent.config.knowledge_subdirs, memory_subdir
                 )
             return wrap
-        else:
-            return Memory(
-                agent=agent,
-                db=Memory.index[memory_subdir],
-                memory_subdir=memory_subdir,
-            )
 
     @staticmethod
     async def reload(agent: Agent):
